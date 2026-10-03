@@ -75,12 +75,20 @@ chmod +x files_tree
 # )
 
 #
+# test/input
+#
+
+cd ../test/input
+
+#
 # Create test data using freshly build tool
 #
-rm -r ../test/output
-mkdir ../test/output
-./files_tree export ../test/input ../test/output/files.is
-./files_tree import ../test/output/files.is ../test/output/restored_input/
+# We're running it in "test/input" to avoid storing that dir in file names.
+#
+rm -r ../output
+mkdir ../output
+../../deploy/files_tree export . ../output/files.is
+../../deploy/files_tree import ../output/files.is ../output/restored_input/
 
 # 2026 #
 # 2026-10-03
