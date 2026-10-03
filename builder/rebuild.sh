@@ -77,10 +77,10 @@ chmod +x files_tree
 #
 # Create test data using freshly build tool
 #
-rm -r ../output
-mkdir ../output
-./files_tree export ../input ../output/files.is
-./files_tree import ../output/files.is ../output/restored_input/
+rm -r ../test/output
+mkdir ../test/output
+./files_tree export ../test/input ../test/output/files.is
+./files_tree import ../test/output/files.is ../test/output/restored_input/
 
 # 2026 #
 # 2026-10-03

@@ -36,11 +36,11 @@ local Modules =
   {
     {
       'files_tree',
-      { 'export', '../input/', '../output/files.is' },
+      { 'export', '../test/input/', '../test/output/files.is' },
     },
     {
       'files_tree',
-      { 'import', '../output/files.is', '../output/restored_input/' },
+      { 'import', '../test/output/files.is', '../test/output/restored_input/' },
     },
   }
 --
