@@ -1,0 +1,6 @@
+( ../input/file.txt Some[ file in base dir.
+] )
+( ../input/subdir/file[ 2.txt] File[ 2 in subdir.
+] )
+( ../input/subdir/file_1.txt File[ 1 in subdir.
+] )
