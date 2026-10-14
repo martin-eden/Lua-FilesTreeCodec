@@ -156,6 +156,22 @@ Beauty here in features that are absent:
   * Write your own format codec under one hour (if you can program)
   * Write this tool under one hour (if you have suitable framework)
 
+* 2026-10-14
+
+  That was experimental project.
+
+  Itness is my streaming format for storing strings tree.
+  That means that theoretically reads and writes need just 1 (one)
+  byte of memory.
+
+  Problem is that large files are stored as strings and can't be skipped.
+  Not good for generic archiver. Also processing their data is longer
+  than just skipping N bytes. Especially in Lua.
+
+  So we need tree format for block data. And such format already exists:
+  `BEncoding` from `Ben Cohen`, used in `.torrent` files.
+  Actually it's great format, I really respect it.
+
 
 ## See also
 
