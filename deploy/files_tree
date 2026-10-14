@@ -351,12 +351,12 @@ package.preload['workshop.concepts.RangePoint'] =
   end
 package.preload['workshop.concepts.ShellCommand'] =
   function(...)
-    local ToString
+    local to_string
     do
       local quote = request('!.concepts.shell.quote')
       local add_to_list = request('!.concepts.list.add_item')
       local glue_words = request('!.concepts.words.to_string')
-      ToString =
+      to_string =
         function(Me)
           local command = Me[1]
           local Args = Me[2]
@@ -368,19 +368,19 @@ package.preload['workshop.concepts.ShellCommand'] =
           return glue_words(Words)
         end
     end
-    local Execute
+    local execute
     do
       local execute_shell_command = request('!.concepts.shell.execute')
-      Execute =
+      execute =
         function(Me)
-          return execute_shell_command(Me:ToString())
+          return execute_shell_command(to_string(Me))
         end
     end
     local Interface
     do
       local create
       do
-        local create_instance = request('!.table.create_instance')
+        local attach_methods = request('!.table.attach_methods')
         create =
           function(Core)
             do
@@ -394,11 +394,12 @@ package.preload['workshop.concepts.ShellCommand'] =
                 assert_string(arg)
               end
             end
-            return create_instance(Core, Interface)
+            attach_methods(Core, Interface)
+            return Core
           end
       end
       Interface =
-        { create = create, ToString = ToString, Execute = Execute }
+        { create = create, ToString = to_string, Execute = execute }
     end
     return Interface
   end
@@ -552,16 +553,69 @@ package.preload['workshop.concepts.StreamIo.Output.File'] =
       { create = create, Open = open, Close = close, Write = write }
     return Interface
   end
+package.preload['workshop.concepts.StreamIo.Output.String'] =
+  function(...)
+    local write
+    do
+      local add_to = request('!.concepts.list.add_item')
+      write =
+        function(Me, data_str)
+          assert_string(data_str)
+          add_to(Me, data_str)
+        end
+    end
+    local get_string
+    do
+      local list_to_string = request('!.concepts.list.to_string')
+      get_string =
+        function(Me)
+          return list_to_string(Me)
+        end
+    end
+    local Interface
+    local create
+    do
+      local attach_methods = request('!.table.attach_methods')
+      create =
+        function()
+          local Me = { }
+          attach_methods(Me, Interface)
+          return Me
+        end
+    end
+    Interface =
+      { create = create, Write = write, GetString = get_string }
+    return create()
+  end
 package.preload['workshop.concepts.codec_itness.compile'] =
   function(...)
-    local DataWriter = request('compile.DataWriter.Interface')
-    local DelimitersWriter =
-      request('compile.DelimitersWriter.Interface')
     local Syntax = request('common.Syntax')
+    local DelimitersWriterClass = request('compile.DelimitersWriter')
+    local DataWriterClass = request('compile.DataWriter')
     return
       function(Node, Output)
-        local DataWriter = new(DataWriter)
-        local DelimitersWriter = new(DelimitersWriter)
+        local DelimitersWriter =
+          DelimitersWriterClass.create(
+            Syntax.delimiters_space_char,
+            Syntax.delimiters_newline_char,
+            Output
+          )
+        local DataWriter =
+          DataWriterClass.create(
+            {
+              [1] = Syntax.delimiters_space_char,
+              [2] = Syntax.delimiters_newline_char,
+              [3] = Syntax.group_open_char,
+              [4] = Syntax.group_close_char,
+              [5] = Syntax.quote_open_char,
+              [6] = Syntax.quote_close_char,
+            },
+            3,
+            4,
+            5,
+            6,
+            Output
+          )
         local compile
         compile =
           function(Node)
@@ -578,13 +632,6 @@ package.preload['workshop.concepts.codec_itness.compile'] =
               DataWriter:EndList()
             end
           end
-        DataWriter.Output = Output
-        DataWriter.Syntax = Syntax
-        DataWriter:Init()
-        DelimitersWriter.Output = Output
-        DelimitersWriter.space_char = Syntax.delimiters_space_char
-        DelimitersWriter.newline_char = Syntax.delimiters_newline_char
-        DelimitersWriter:Init()
         compile(Node)
         DelimitersWriter:HandleEvent('nothing')
       end
@@ -598,30 +645,33 @@ package.preload['workshop.concepts.codec_itness.parse'] =
       local quote_close_char = Syntax.quote_close_char
       local space_char = Syntax.delimiters_space_char
       local newline_char = Syntax.delimiters_newline_char
+      local StringStreamClass =
+        request('!.concepts.StreamIo.Output.String')
       read_token =
         function(Input)
-          local token = ''
+          local StringStream = new(StringStreamClass)
           local in_quotes = false
           while true do
             local char = Input:Read(1)
             if (char == '') then
-              return token
+              return StringStream:GetString()
             end
             if in_quotes then
               if (char == quote_close_char) then
                 in_quotes = false
               else
-                token = token .. char
+                StringStream:Write(char)
               end
             else
               if (char == space_char) or (char == newline_char) then
+                local token = StringStream:GetString()
                 if (token ~= '') then
                   return token
                 end
               elseif (char == quote_open_char) then
                 in_quotes = true
               else
-                token = token .. char
+                StringStream:Write(char)
               end
             end
           end
@@ -672,114 +722,125 @@ package.preload['workshop.concepts.codec_itness.common.Syntax'] =
       }
     return Syntax
   end
-package.preload[
-  'workshop.concepts.codec_itness.compile.DataWriter.Interface'
-] =
+package.preload['workshop.concepts.codec_itness.compile.DataWriter'] =
   function(...)
-    local get_values = request('!.table.get_values')
-    local map_values = request('!.table.map_values')
-    local list_to_string = request('!.concepts.list.to_string')
-    local lua_regexp_quote = request('!.lua.regexp.quote')
-    local Interface =
+    local start_list =
+      function(Me)
+        Me[7]:Write(Me[1])
+      end
+    local end_list =
+      function(Me)
+        Me[7]:Write(Me[2])
+      end
+    local write_leaf
+    do
+      local str_gsub = string.gsub
+      write_leaf =
+        function(Me, str)
+          local quote_open_char = Me[3]
+          local quote_close_char = Me[4]
+          local IsSyntaxChar_Map = Me[5]
+          local syntax_chars_regexp = Me[6]
+          local in_quotes = false
+          local encode_char =
+            function(char)
+              if not IsSyntaxChar_Map[char] then
+                return char
+              end
+              local Result = char
+              if not in_quotes then
+                if (char ~= quote_close_char) then
+                  Result = quote_open_char .. char
+                  in_quotes = true
+                end
+              else
+                if (char == quote_close_char) then
+                  Result = quote_close_char .. char
+                  in_quotes = false
+                end
+              end
+              return Result
+            end
+          local encoded_str =
+            str_gsub(str, syntax_chars_regexp, encode_char)
+          if in_quotes then
+            encoded_str = encoded_str .. quote_close_char
+            in_quotes = false
+          end
+          if (str == '') then
+            encoded_str = quote_open_char .. quote_close_char
+          end
+          Me[7]:Write(encoded_str)
+        end
+    end
+    local create
+    local Interface
+    do
+      local map_values = request('!.table.map_values')
+      local list_to_str = request('!.concepts.list.to_string')
+      local quote_regexp = request('!.lua.regexp.quote')
+      local attach_methods = request('!.table.attach_methods')
+      create =
+        function(
+          SyntaxChars,
+          group_open_idx,
+          group_close_idx,
+          quote_open_idx,
+          quote_close_idx,
+          OutputStream
+        )
+          local SyntaxChars_Map = map_values(SyntaxChars)
+          local syntax_chars_regexp =
+            '[' .. quote_regexp(list_to_str(SyntaxChars)) .. ']'
+          local Me =
+            {
+              [1] = SyntaxChars[group_open_idx],
+              [2] = SyntaxChars[group_close_idx],
+              [3] = SyntaxChars[quote_open_idx],
+              [4] = SyntaxChars[quote_close_idx],
+              [5] = SyntaxChars_Map,
+              [6] = syntax_chars_regexp,
+              [7] = OutputStream,
+            }
+          attach_methods(Me, Interface)
+          return Me
+        end
+    end
+    Interface =
       {
-        Output = { },
-        Syntax = { },
-        Init =
-          function(Me)
-            local SyntaxList = get_values(Me.Syntax)
-            Me.IsSyntaxChar_Map = map_values(SyntaxList)
-            Me.syntax_chars_regexp =
-              '[' .. lua_regexp_quote(list_to_string(SyntaxList)) .. ']'
-          end,
-        StartList =
-          function(Me)
-            Me.Output:Write(Me.Syntax.group_open_char)
-          end,
-        EndList =
-          function(Me)
-            Me.Output:Write(Me.Syntax.group_close_char)
-          end,
-        WriteLeaf = request('WriteLeaf'),
-        IsSyntaxChar_Map = { },
-        syntax_chars_regexp = '',
+        create = create,
+        StartList = start_list,
+        EndList = end_list,
+        WriteLeaf = write_leaf,
       }
     return Interface
   end
 package.preload[
-  'workshop.concepts.codec_itness.compile.DataWriter.WriteLeaf'
+  'workshop.concepts.codec_itness.compile.DelimitersWriter'
 ] =
   function(...)
-    local WriteLeaf =
-      function(Me, str)
-        local quote_open_char = Me.Syntax.quote_open_char
-        local quote_close_char = Me.Syntax.quote_close_char
-        local IsSyntaxChar_Map = Me.IsSyntaxChar_Map
-        local syntax_chars_regexp = Me.syntax_chars_regexp
-        local in_quotes = false
-        local encode_char =
-          function(char)
-            local Result = char
-            if
-              not in_quotes and
-              (IsSyntaxChar_Map[char] and (char ~= quote_close_char))
-            then
-              Result = quote_open_char .. char
-              in_quotes = true
-            end
-            if in_quotes and (char == quote_close_char) then
-              Result = quote_close_char .. char
-              in_quotes = false
-            end
-            return Result
-          end
-        local encoded_str =
-          string.gsub(str, syntax_chars_regexp, encode_char)
-        if in_quotes then
-          encoded_str = encoded_str .. quote_close_char
-          in_quotes = false
-        end
-        if (str == '') then
-          encoded_str = quote_open_char .. quote_close_char
-        end
-        Me.Output:Write(encoded_str)
-      end
-    return WriteLeaf
-  end
-package.preload[
-  'workshop.concepts.codec_itness.compile.DelimitersWriter.HandleEvent'
-] =
-  function(...)
-    local Emit =
+    local emit =
       function(Me, str)
         if (str == '') then
           return
         end
-        Me.Output:Write(str)
-        Me.is_on_empty_line = false
-      end
-    local EmitNewline =
-      function(Me)
-        if Me.is_on_empty_line then
-          return
-        end
-        Emit(Me, Me.newline_char)
-        Me.is_on_empty_line = true
-      end
-    local EmitIndent =
-      function(Me)
-        EmitNewline(Me)
-        Emit(Me, Me.Indent:ToString())
+        Me[6]:Write(str)
+        Me[5] = false
       end
     local F_Empty =
       function(Me)
       end
-    local F_Indent =
-      function(Me)
-        EmitIndent(Me)
-      end
     local F_Space =
       function(Me)
-        Emit(Me, Me.space_char)
+        emit(Me, Me[1])
+      end
+    local F_Indent =
+      function(Me)
+        if not Me[5] then
+          emit(Me, Me[2])
+          Me[5] = true
+        end
+        emit(Me, Me[3]:ToString())
       end
     local EventsToFunc =
       {
@@ -812,49 +873,51 @@ package.preload[
             ['end_list'] = F_Indent,
           },
       }
-    local OnEvent =
+    local handle_event =
       function(Me, cur_event)
-        if (Me.prev_event ~= 'nothing') then
-          Me.is_on_empty_line = false
+        local Indent = Me[3]
+        local prev_event = Me[4]
+        local is_on_empty_line = Me[5]
+        if (prev_event ~= 'nothing') then
+          is_on_empty_line = false
         end
         if (cur_event == 'end_list') then
-          Me.Indent:Dec()
+          Indent:Dec()
         end
-        local PaddingFunc = EventsToFunc[Me.prev_event][cur_event]
-        PaddingFunc(Me)
+        EventsToFunc[prev_event][cur_event](Me)
         if (cur_event == 'start_list') then
-          Me.Indent:Inc()
+          Indent:Inc()
         end
-        Me.prev_event = cur_event
+        prev_event = cur_event
+        Me[4] = prev_event
+        Me[5] = is_on_empty_line
       end
-    return OnEvent
-  end
-package.preload[
-  'workshop.concepts.codec_itness.compile.DelimitersWriter.Interface'
-] =
-  function(...)
-    local IndentClass = request('!.concepts.Indent')
-    local Interface =
-      {
-        Output = { },
-        space_char = '',
-        newline_char = '',
-        Init =
-          function(Me)
-            Me.Indent = IndentClass.create()
-            local space_char = Me.space_char
-            local spaces_per_indent = 2
-            local indent_chunk =
-              string.rep(space_char, spaces_per_indent)
-            Me.Indent:SetIndentChunk(indent_chunk)
-            Me.prev_event = 'nothing'
-            Me.is_on_empty_line = true
-          end,
-        HandleEvent = request('HandleEvent'),
-        Indent = Indent,
-        prev_event = '',
-        is_on_empty_line = false,
-      }
+    local create
+    local Interface
+    do
+      local IndentClass = request('!.concepts.Indent')
+      local spaces_per_indent = 2
+      local str_rep = string.rep
+      local attach_methods = request('!.table.attach_methods')
+      create =
+        function(space_char, newline_char, OutputStream)
+          local Indent = IndentClass.create()
+          local indent_chunk = str_rep(space_char, spaces_per_indent)
+          Indent:SetIndentChunk(indent_chunk)
+          local Me =
+            {
+              [1] = space_char,
+              [2] = newline_char,
+              [3] = Indent,
+              [4] = 'nothing',
+              [5] = true,
+              [6] = OutputStream,
+            }
+          attach_methods(Me, Interface)
+          return Me
+        end
+    end
+    Interface = { create = create, HandleEvent = handle_event }
     return Interface
   end
 package.preload['workshop.concepts.list.add_item'] =
@@ -1499,9 +1562,8 @@ package.preload['workshop.file_system.file.to_string'] =
 package.preload['workshop.lua.regexp.magic_char_pattern'] =
   function(...)
     local magic_chars = request('magic_chars')
-    local magic_char_patttern =
-      '[' .. magic_chars:gsub('.', '%%%0') .. ']'
-    return magic_char_patttern
+    local str_gsub = string.gsub
+    return '[' .. str_gsub(magic_chars, '.', '%%%0') .. ']'
   end
 package.preload['workshop.lua.regexp.magic_chars'] =
   function(...)
@@ -1510,9 +1572,10 @@ package.preload['workshop.lua.regexp.magic_chars'] =
 package.preload['workshop.lua.regexp.quote'] =
   function(...)
     local magic_char_pattern = request('magic_char_pattern')
+    local str_gsub = string.gsub
     return
-      function(s)
-        return s:gsub(magic_char_pattern, '%%%0')
+      function(str)
+        return str_gsub(str, magic_char_pattern, '%%%0')
       end
   end
 package.preload['workshop.mechs.cmdline.get_cmd_dir_exists'] =
@@ -1801,15 +1864,7 @@ package.preload['workshop.table.attach_methods'] =
       function(Object, Methods)
         assert_table(Object)
         assert_table(Methods)
-        local Metatable =
-          {
-            __index = Methods,
-            __newindex =
-              function()
-                error('Table is locked for additions/removals.')
-              end,
-          }
-        setmetatable(Object, Metatable)
+        setmetatable(Object, { __index = Methods })
       end
   end
 package.preload['workshop.table.clone'] =
@@ -1837,33 +1892,6 @@ package.preload['workshop.table.clone'] =
             end
         end
         return clone(Node)
-      end
-  end
-package.preload['workshop.table.create_instance'] =
-  function(...)
-    local clone = request('clone')
-    local attach_methods = request('attach_methods')
-    return
-      function(Data, Methods)
-        assert_table(Data)
-        assert_table(Methods)
-        local Result
-        Result = clone(Data)
-        attach_methods(Result, Methods)
-        return Result
-      end
-  end
-package.preload['workshop.table.get_values'] =
-  function(...)
-    local add_to_list = request('!.concepts.list.add_item')
-    return
-      function(List)
-        assert_table(List)
-        local Values = { }
-        for _, value in pairs(List) do
-          add_to_list(Values, value)
-        end
-        return Values
       end
   end
 package.preload['workshop.table.map_values'] =
